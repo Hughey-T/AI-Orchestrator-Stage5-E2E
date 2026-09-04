@@ -1,0 +1,41 @@
+name: Deploy production
+run-name: orchestrator:${{ inputs.orchestrator_correlation_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      orchestrator_correlation_id: { required: true, type: string }
+      commit_sha: { required: true, type: string }
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages-production
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.commit_sha }}" }
+      - run: test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+      - run: printf '{"status":"ok","acceptance":"stage5-production-e2e","commit_sha":"%s"}\n' "${{ inputs.commit_sha }}" > public/api-smoke.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: public }
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - id: pages
+        uses: actions/deploy-pages@v4
+  acceptance:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl --fail --retry 8 --retry-delay 5 https://hughey-t.github.io/AI-Orchestrator-Stage5-E2E/ | grep -F 'Orchestrator Stage 5 production E2E PASS'
+      - run: curl --fail --retry 8 --retry-delay 5 https://hughey-t.github.io/AI-Orchestrator-Stage5-E2E/health.json | grep -F '"status":"ok"'
+      - run: curl --fail --retry 8 --retry-delay 5 https://hughey-t.github.io/AI-Orchestrator-Stage5-E2E/api-smoke.json | grep -F '"commit_sha":"${{ inputs.commit_sha }}"'
